@@ -1,0 +1,271 @@
+<title>Snowman Dodge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sniglet:wght@400;800&display=swap">
+<style>
+  /* Layout: one full-height stage, portrait canvas scaled to fit, tap halves to move.
+     Deliberately single-theme: a winter night scene that looks the same on any host. */
+  :root {
+    --sky-top: #0f2340;
+    --sky-low: #2c5a86;
+    --snow: #f4f8ff;
+    --bark: #5a3a22;
+    --pine: #2f8f5b;
+    --ink: #13233b;
+    --carrot: #ff8a2a;
+    --font-display: "Sniglet", "Chalkboard SE", "Comic Sans MS", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--sky-top);
+    color: var(--snow);
+    font-family: var(--font-display);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage { position: relative; height: 100%; max-width: 100%; aspect-ratio: 420 / 740; }
+  canvas { display: block; width: 100%; height: 100%; }
+  canvas:focus-visible { outline: 3px solid var(--carrot); outline-offset: -3px; }
+</style>
+
+<div id="stage">
+  <canvas id="game" width="420" height="740" tabindex="0" aria-label="Snowman Dodge game. Tap left or right side, or use arrow keys."></canvas>
+</div>
+
+<script>
+(() => {
+  const W = 420, H = 740;
+  const css = getComputedStyle(document.documentElement);
+  const C = name => css.getPropertyValue(name).trim();
+  const col = {
+    skyTop: C("--sky-top"), skyLow: C("--sky-low"), snow: C("--snow"),
+    bark: C("--bark"), pine: C("--pine"), ink: C("--ink"), carrot: C("--carrot"),
+  };
+  const FONT = C("--font-display");
+
+  // tree + branches
+  const trunkW = 44, trunkX = (W - trunkW) / 2;
+  const branchW = 130, branchH = 16, branchGap = 210;
+  const groundY = H - 90;
+
+  // snowman
+  const rad = 16, snowmanY = groundY - 46, snowmanDist = 26;
+
+  // speed in pixels per second
+  const startSpeed = 260, speedStep = 14, maxSpeed = 900;
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+  }
+  resize();
+  addEventListener("resize", resize);
+
+  const store = {
+    get() { try { return parseInt(localStorage.getItem("snowman-best") || "0", 10) || 0; } catch { return 0; } },
+    set(v) { try { localStorage.setItem("snowman-best", String(v)); } catch {} },
+  };
+
+  const side = () => (Math.random() < 0.5 ? "left" : "right");
+  const flakes = Array.from({ length: 70 }, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    r: 0.8 + Math.random() * 2.2, v: 20 + Math.random() * 40, drift: Math.random() * 6.28,
+  }));
+
+  const g = { state: "start", pos: "right", speed: startSpeed, score: 0, best: store.get(),
+              branches: [], shake: 0, overAt: 0 };
+
+  function reset() {
+    g.pos = "right";
+    g.speed = startSpeed;
+    g.score = 0;
+    g.shake = 0;
+    // stack branches above the screen; first one is never on the snowman's side
+    g.branches = Array.from({ length: Math.ceil(H / branchGap) + 2 }, (_, i) => ({
+      y: -120 - i * branchGap, pos: i === 0 ? "left" : side(), passed: false,
+    }));
+  }
+  reset();
+  // show a few branches on the start screen so the scene isn't empty
+  g.branches.forEach((b, i) => { b.y = 60 + i * branchGap - branchGap * 2; });
+
+  function start() { reset(); g.state = "playing"; }
+
+  function move(pos) {
+    if (g.state === "playing") { g.pos = pos; return; }
+    // brief pause after a crash so a frantic tap doesn't instantly restart
+    if (g.state === "start" || performance.now() - g.overAt > 600) start();
+  }
+
+  canvas.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    canvas.focus({ preventScroll: true });
+    const r = canvas.getBoundingClientRect();
+    move(e.clientX - r.left < r.width / 2 ? "left" : "right");
+  });
+  addEventListener("keydown", e => {
+    if (["ArrowLeft", "a", "A"].includes(e.key)) { move("left"); e.preventDefault(); }
+    else if (["ArrowRight", "d", "D"].includes(e.key)) { move("right"); e.preventDefault(); }
+    else if (e.key === " " || e.key === "Enter") { if (g.state !== "playing") move(g.pos); e.preventDefault(); }
+  });
+
+  const snowmanX = () => g.pos === "left" ? trunkX - snowmanDist - rad : trunkX + trunkW + snowmanDist + rad;
+  const branchX = b => b.pos === "left" ? trunkX - branchW : trunkX + trunkW;
+
+  function update(dt) {
+    for (const f of flakes) {
+      f.y += f.v * dt;
+      f.drift += dt;
+      f.x += Math.sin(f.drift) * 10 * dt;
+      if (f.y > H) { f.y = -4; f.x = Math.random() * W; }
+    }
+    g.shake = Math.max(0, g.shake - dt * 2.5);
+    if (g.state !== "playing") return;
+
+    // hit box covers head and middle ball
+    const top = snowmanY - rad * 2.4, bottom = snowmanY + rad;
+    let topY = Math.min(...g.branches.map(b => b.y));
+    for (const b of g.branches) {
+      b.y += g.speed * dt;
+      if (b.pos === g.pos && b.y + branchH > top && b.y < bottom) {
+        g.state = "over";
+        g.overAt = performance.now();
+        g.shake = reduceMotion ? 0 : 1;
+        if (navigator.vibrate) try { navigator.vibrate(120); } catch {}
+        if (g.score > g.best) { g.best = g.score; store.set(g.best); }
+        return;
+      }
+      if (!b.passed && b.y > bottom) {
+        b.passed = true;
+        g.score++;
+        g.speed = Math.min(maxSpeed, g.speed + speedStep);
+      }
+      if (b.y > groundY) {
+        b.y = topY - branchGap;
+        b.pos = side();
+        b.passed = false;
+        topY = b.y;
+      }
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h);
+  }
+
+  function drawBranch(b) {
+    const x = branchX(b);
+    ctx.fillStyle = col.pine;
+    roundRect(x, b.y, branchW, branchH, 8);
+    ctx.fill();
+    // snow resting on top of the branch
+    ctx.fillStyle = col.snow;
+    roundRect(x + 8, b.y - 4, branchW - 16, 6, 3);
+    ctx.fill();
+  }
+
+  function drawSnowman() {
+    const x = snowmanX();
+    const balls = [[snowmanY + rad * 1.6, rad * 1.3], [snowmanY, rad], [snowmanY - rad * 1.6, rad * 0.75]];
+    for (const [y, r] of balls) {
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = col.snow; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = col.ink; ctx.stroke();
+    }
+    const headY = balls[2][0], eye = rad / 4;
+    ctx.fillStyle = col.ink;
+    for (const ex of [x - eye, x + eye]) { ctx.beginPath(); ctx.arc(ex, headY - 3, 2, 0, Math.PI * 2); ctx.fill(); }
+    // buttons
+    for (const by of [snowmanY - 5, snowmanY + 5]) { ctx.beginPath(); ctx.arc(x, by, 2, 0, Math.PI * 2); ctx.fill(); }
+    // carrot nose points away from the tree
+    const nose = g.pos === "right" ? 11 : -11;
+    ctx.fillStyle = col.carrot;
+    ctx.beginPath(); ctx.moveTo(x, headY); ctx.lineTo(x, headY + 4); ctx.lineTo(x + nose, headY + 2); ctx.fill();
+  }
+
+  function text(str, size, y, color = col.snow) {
+    ctx.font = `800 ${size}px ${FONT}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.fillText(str, W / 2, y);
+  }
+
+  function panel(lines) {
+    ctx.fillStyle = "rgba(15, 35, 64, 0.82)";
+    roundRect(40, H * 0.26, W - 80, 230, 22);
+    ctx.fill();
+    lines.forEach(([str, size, color], i) => text(str, size, H * 0.26 + 48 + i * 46, color));
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (g.shake > 0) ctx.translate((Math.random() - 0.5) * 14 * g.shake, (Math.random() - 0.5) * 14 * g.shake);
+
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, col.skyTop);
+    sky.addColorStop(1, col.skyLow);
+    ctx.fillStyle = sky;
+    ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    // tap hint: each half of the screen is a button
+    if (g.state === "playing") {
+      ctx.fillStyle = "rgba(244, 248, 255, 0.04)";
+      ctx.fillRect(g.pos === "left" ? 0 : W / 2, 0, W / 2, groundY);
+    }
+
+    ctx.fillStyle = col.bark;
+    ctx.fillRect(trunkX, -20, trunkW, groundY + 20);
+    g.branches.forEach(drawBranch);
+
+    ctx.fillStyle = col.snow;
+    ctx.fillRect(-20, groundY, W + 40, H - groundY + 20);
+    drawSnowman();
+
+    ctx.fillStyle = col.snow;
+    for (const f of flakes) { ctx.globalAlpha = 0.75; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    ctx.font = `800 40px ${FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = col.snow;
+    ctx.fillText(String(g.score), W / 2, 22);
+    ctx.font = `400 16px ${FONT}`;
+    ctx.fillText(`best ${g.best}`, W / 2, 66);
+
+    if (g.state === "start") {
+      panel([["Snowman Dodge", 34], ["Tap left or right side", 20], ["to dodge falling branches", 20], ["Tap to start", 22, col.carrot]]);
+    } else if (g.state === "over") {
+      panel([["Bonk!", 40], [`You dodged ${g.score}`, 22], [g.score >= g.best && g.score > 0 ? "New best!" : `Best: ${g.best}`, 20], ["Tap to play again", 22, col.carrot]]);
+    }
+
+    ctx.fillStyle = col.ink;
+    ctx.font = `400 14px ${FONT}`;
+    ctx.textBaseline = "middle";
+    ctx.fillText("◀ tap left          tap right ▶", W / 2, H - 30);
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
