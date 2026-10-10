@@ -1,141 +1,242 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Creates initial tree with branches 
-"""
-import pygame
-import os
+Snowman Dodge - branches fall down the tree, move the snowman
+left/right to dodge them.
 
-# global variables
+Controls:
+    LEFT / A    move to the left side of the tree
+    RIGHT / D   move to the right side of the tree
+    SPACE       start / restart
+    ESC         quit
+"""
+import os
+import random
+import pygame
+
+# window
 width = 1400
 height = 700
+FPS = 60
+
+# tree
 TreeWidth = 60
-TreeStartWidth = (width-TreeWidth)//2
-direction = 10
-branchWidth = TreeWidth*3
-branchHeight = height//40
-snowmanDist = 20   #Distance from tree
-snowmanY = 7*height//8   # Position from top of centre of snowman  
-rad = 10  # Snowman radius 
+TreeStartWidth = (width - TreeWidth) // 2
+branchWidth = TreeWidth * 3
+branchHeight = height // 40
+branchGap = 220            # vertical distance between falling branches
 
-class Branches:
-    
-    def __init__(self,x,changeX, pos):
-        self.x = x #height from top 
-        self.changeX = changeX
-        self.pos = pos # left or right
+# snowman
+snowmanDist = 40           # distance from tree
+snowmanY = 7 * height // 8 # y of the snowman's middle ball
+rad = 18                   # radius of the middle ball
 
-    def show(self,colour):
-        global screen
+# speed (pixels per frame)
+startSpeed = 4.0
+speedStep = 0.25           # added every time a branch is dodged
+maxSpeed = 16.0
+
+# colours
+bgColor = pygame.Color(200, 230, 255)
+groundColor = pygame.Color("white")
+trunkColor = pygame.Color(110, 70, 40)
+fgColor = pygame.Color(30, 130, 60)
+snowColor = pygame.Color("white")
+outlineColor = pygame.Color(60, 60, 80)
+noseColor = pygame.Color("orange")
+textColor = pygame.Color(30, 30, 50)
+
+highScoreFile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "highscore.txt")
+
+
+def loadHighScore():
+    try:
+        with open(highScoreFile) as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def saveHighScore(score):
+    try:
+        with open(highScoreFile, "w") as f:
+            f.write(str(score))
+    except OSError:
+        pass
+
+
+class Branch:
+
+    def __init__(self, y, pos):
+        self.y = y      # height from top
+        self.pos = pos  # "left" or "right"
+        self.passed = False
+
+    def rect(self):
         if self.pos == "left":
-            pygame.draw.rect(screen, colour, \
-                             pygame.Rect(TreeStartWidth-branchWidth,self.x,branchWidth,branchHeight))
-        elif self.pos == "right":
-            pygame.draw.rect(screen, colour, \
-                             pygame.Rect(TreeStartWidth+TreeWidth,self.x,branchWidth,branchHeight))
+            x = TreeStartWidth - branchWidth
         else:
-            pass # Error has occurred
-            
-            
-    def update(self, snowmanPos):
-        global bgColor,fgColor
-        
-        self.show(bgColor)
-        newX = self.x + self.changeX 
-        
-        if newX < snowmanY+rad and newX > snowmanY-rad: # Branch is in snowmans space
-            if snowmanPos == self.pos:
-                # display game over
-                while True:
-                    e = pygame.event.poll()
-                    if e.type == pygame.QUIT:
-                        break
-                pygame.quit()  
-                os._exit(0)
-                    
-            
-        elif newX + branchHeight >= height:
-            self.x = 0
-        else:
-            self.x += self.changeX
-            self.show(fgColor)
-            
-        
+            x = TreeStartWidth + TreeWidth
+        return pygame.Rect(x, int(self.y), branchWidth, branchHeight)
+
+    def show(self, screen):
+        pygame.draw.rect(screen, fgColor, self.rect(), border_radius=4)
+
+    def update(self, speed):
+        self.y += speed
+
 
 class Snowman:
-    
 
-    #  snowman is either left or right - always has same y coordinates
+    # snowman is either left or right - always has same y coordinate
     def __init__(self, pos):
         self.pos = pos
-    
-    def show(self,colour):
-        global screen
+
+    def centreX(self):
         if self.pos == "left":
-            pygame.draw.circle(screen,colour, (TreeStartWidth-snowmanDist,snowmanY),rad)
-        elif self.pos == "right":
-            pygame.draw.circle(screen,colour, (TreeStartWidth+snowmanDist+TreeWidth,snowmanY),rad)
-        else:
-            pass
-        
-        
+            return TreeStartWidth - snowmanDist - rad
+        return TreeStartWidth + TreeWidth + snowmanDist + rad
 
-# we start drawing our scenario:
+    def rect(self):
+        # hit box covering the head and middle ball
+        x = self.centreX()
+        top = snowmanY - rad - int(rad * 1.4)
+        return pygame.Rect(x - rad, top, rad * 2, snowmanY + rad - top)
 
-pygame.init()
+    def show(self, screen):
+        x = self.centreX()
+        balls = [
+            (snowmanY + int(rad * 1.6), int(rad * 1.3)),  # bottom
+            (snowmanY, rad),                               # middle
+            (snowmanY - int(rad * 1.6), int(rad * 0.75)),  # head
+        ]
+        for y, r in balls:
+            pygame.draw.circle(screen, snowColor, (x, y), r)
+            pygame.draw.circle(screen, outlineColor, (x, y), r, 2)
 
-screen = pygame.display.set_mode((width, height))
-
-bgColor = pygame.Color("white")
-fgColor = pygame.Color("green")
-snowmanColor = pygame.Color("red")
-
-# filling the background
-screen.fill(bgColor)
-
-# draw the tree
-pygame.draw.rect(screen, fgColor, pygame.Rect(TreeStartWidth,0,TreeWidth,height))
-
-# draw braches
-fromTop = 20
-branch1 = Branches(fromTop, 10, "left")
-branch1.show(fgColor)
-
-branch2 = Branches(fromTop+200, 10, "right")
-branch2.show(fgColor)
-
-branch3 = Branches(fromTop+400, 10, "left")
-branch3.show(fgColor)
-
-# draw snowman
-snowman = Snowman("right")
-#snowman.show(snowmanColor)
-
-while True:
-    e = pygame.event.poll()
-    if e.type == pygame.QUIT:
-        break
-
-    # visualise the changes you just made
-    pygame.display.flip()
-    
-    # update branches
-    
-    branch1.update(snowman.pos)
-    branch2.update(snowman.pos)
-    branch3.update(snowman.pos)
-    
-    #inputKey = pygame.key.get_mods()
-    #rightKey = pygame.key.name(pygame.K_RIGHT)
-    #if pygame.key.get_focused():
-        #if pygame.key.name() == "K_LEFT" and snowman.pos=="right":
-         #   snowman = Snowman("left")
-         #   snowman.show(snowmanColor)
-        
-       # if pygame.key.name() == "K_RIGHT" and snowman.pos=="left":
-         #   snowman = Snowman("right")
-          #  snowman.show(snowmanColor)
+        headY = balls[2][0]
+        eyeOff = rad // 4
+        pygame.draw.circle(screen, outlineColor, (x - eyeOff, headY - 3), 2)
+        pygame.draw.circle(screen, outlineColor, (x + eyeOff, headY - 3), 2)
+        # carrot nose points away from the tree
+        nose = 10 if self.pos == "right" else -10
+        pygame.draw.polygon(screen, noseColor,
+                            [(x, headY), (x, headY + 4), (x + nose, headY + 2)])
 
 
-pygame.quit()  # for the rest of you.
-os._exit(0)  # just for MacOs users
+class Game:
+
+    def __init__(self):
+        pygame.init()
+        pygame.display.set_caption("Snowman Dodge")
+        self.screen = pygame.display.set_mode((width, height))
+        self.clock = pygame.time.Clock()
+        self.bigFont = pygame.font.SysFont(None, 72)
+        self.font = pygame.font.SysFont(None, 36)
+        self.highScore = loadHighScore()
+        self.state = "start"  # "start", "playing" or "over"
+        self.reset()
+
+    def reset(self):
+        self.snowman = Snowman("right")
+        self.speed = startSpeed
+        self.score = 0
+        # stack branches above the screen so they fall in one after another
+        self.branches = [Branch(-i * branchGap, random.choice(["left", "right"]))
+                         for i in range(height // branchGap + 2)]
+
+    def handleKey(self, key):
+        if key == pygame.K_ESCAPE:
+            return False
+        if self.state == "playing":
+            if key in (pygame.K_LEFT, pygame.K_a):
+                self.snowman.pos = "left"
+            elif key in (pygame.K_RIGHT, pygame.K_d):
+                self.snowman.pos = "right"
+        elif key == pygame.K_SPACE:
+            self.reset()
+            self.state = "playing"
+        return True
+
+    def update(self):
+        if self.state != "playing":
+            return
+
+        hitBox = self.snowman.rect()
+        topY = min(b.y for b in self.branches)
+        for branch in self.branches:
+            branch.update(self.speed)
+
+            if branch.pos == self.snowman.pos and branch.rect().colliderect(hitBox):
+                self.gameOver()
+                return
+
+            if not branch.passed and branch.y > hitBox.bottom:
+                branch.passed = True
+                self.score += 1
+                self.speed = min(maxSpeed, self.speed + speedStep)
+
+            # recycle branches that left the screen back to the top
+            if branch.y > height:
+                branch.y = topY - branchGap
+                branch.pos = random.choice(["left", "right"])
+                branch.passed = False
+                topY = branch.y
+
+    def gameOver(self):
+        self.state = "over"
+        if self.score > self.highScore:
+            self.highScore = self.score
+            saveHighScore(self.highScore)
+
+    def drawText(self, text, font, y):
+        surface = font.render(text, True, textColor)
+        self.screen.blit(surface, surface.get_rect(center=(width // 2, y)))
+
+    def draw(self):
+        self.screen.fill(bgColor)
+        groundY = snowmanY + int(rad * 2.9)
+        pygame.draw.rect(self.screen, trunkColor, pygame.Rect(TreeStartWidth, 0, TreeWidth, groundY))
+        for branch in self.branches:
+            branch.show(self.screen)
+        # ground drawn after branches so they disappear into the snow
+        pygame.draw.rect(self.screen, groundColor, pygame.Rect(0, groundY, width, height - groundY))
+        self.snowman.show(self.screen)
+
+        hud = self.font.render(f"Score: {self.score}   Best: {self.highScore}", True, textColor)
+        self.screen.blit(hud, (20, 20))
+
+        if self.state != "playing":
+            panel = pygame.Surface((560, 200), pygame.SRCALPHA)
+            panel.fill((255, 255, 255, 220))
+            self.screen.blit(panel, panel.get_rect(center=(width // 2, height // 3 + 45)))
+
+        if self.state == "start":
+            self.drawText("Snowman Dodge", self.bigFont, height // 3)
+            self.drawText("LEFT / RIGHT to dodge the branches", self.font, height // 3 + 60)
+            self.drawText("Press SPACE to start", self.font, height // 3 + 100)
+        elif self.state == "over":
+            self.drawText("Game Over!", self.bigFont, height // 3)
+            self.drawText(f"You dodged {self.score} branches", self.font, height // 3 + 60)
+            self.drawText("Press SPACE to play again", self.font, height // 3 + 100)
+
+        pygame.display.flip()
+
+    def run(self):
+        running = True
+        while running:
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    running = False
+                elif e.type == pygame.KEYDOWN:
+                    running = self.handleKey(e.key) and running
+
+            self.update()
+            self.draw()
+            self.clock.tick(FPS)
+
+        pygame.quit()
+
+
+if __name__ == "__main__":
+    Game().run()
